@@ -13,7 +13,13 @@ app.use(cors({origin:process.env.FRONTEND_URL||'*',credentials:true}))
 app.use(express.json({limit:'2mb'}))
 app.use('/uploads',express.static(path.join(__dirname,'uploads')))
 mongoose.connect(process.env.MONGO_URI,{maxPoolSize:20})
-  .then(async()=>{console.log('DB connected');await seedAdmin()})
+  .then(async()=>{
+    console.log('DB connected');
+    await seedAdmin();
+    const host=process.env.RAILWAY_PUBLIC_DOMAIN||process.env.RAILWAY_STATIC_URL||('localhost:'+(process.env.PORT||5000));
+    const proto=process.env.RAILWAY_PUBLIC_DOMAIN?'https':'http';
+    console.log('\n🚀 Backend URL: '+proto+'://'+host+'\n');
+  })
   .catch(e=>{console.error(e.message);process.exit(1)})
 async function seedAdmin(){
   const{User}=require('./models')
