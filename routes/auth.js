@@ -7,7 +7,15 @@ const {sign,signAdmin}=require('../middleware')
 const {User}=require('../models')
 const safe=u=>{const{password,resetToken,resetExpiry,...rest}=u.toObject();return rest}
 /* ── Nodemailer ── */
-function mailer(){return nodemailer.createTransport({service:'gmail',auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}})}
+function mailer(){
+  return nodemailer.createTransport({
+    host:'smtp.gmail.com',
+    port:465,
+    secure:true,
+    auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS},
+    tls:{rejectUnauthorized:false}
+  })
+}
 /* ── Register ── */
 router.post('/register',async(req,res)=>{
   try{
@@ -49,7 +57,7 @@ router.post('/forgot-password',async(req,res)=>{
     user.resetExpiry=new Date(Date.now()+3600000)
     await user.save()
     const link=`${process.env.FRONTEND_URL}/reset-password?token=${token}`
-    await mailer().sendMail({from:`"Social Credit System" <${process.env.SMTP_USER}>`,to:email,subject:'☭ Password Reset Request',html:`<div style="background:#1a1a2e;color:#eee;padding:30px;font-family:monospace"><h2 style="color:#ff6b6b">☭ Social Credit System</h2><p>The Party has received your password reset request.</p><a href="${link}" style="background:#ff6b6b;color:#111;padding:10px 20px;text-decoration:none;display:inline-block;margin:16px 0">Reset Password</a><p>Expires in 1 hour. If you did not request this, the Party is watching.</p></div>`})
+    await mailer().sendMail({from:`"Social Credit System" <${process.env.SMTP_USER}>`,to:email,subject:'☭ Password Reset Request',`html`:`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>@import url('https://fonts.googleapis.com/css2?family=MedievalSharp&family=IM+Fell+English:ital@0;1&family=Courier+Prime&display=swap');*{margin:0;padding:0;box-sizing:border-box}body{background:#090909;font-family:'Courier Prime',monospace}table{width:100%}td{padding:0}</style></head><body><table width="100%" cellpadding="0" cellspacing="0" style="background:#090909;min-height:100vh"><tr><td align="center" style="padding:40px 20px"><table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%"><tr><td style="background:#0d0a0d;border:2px solid #5a3a4a;padding:0"><table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:6px;background:#0a070a"><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #3a1f2a"><tr><td style="padding:6px;background:#090609"><table width="100%" cellpadding="0" cellspacing="0" style="border:1px dashed #2a1520"><tr><td align="center" style="padding:36px 40px 28px"><p style="font-family:'Courier Prime',monospace;font-size:9px;letter-spacing:4px;text-transform:uppercase;color:#4a2a3a;margin-bottom:16px">SOCIAL CREDIT SYSTEM — DIRECTIVE</p><h1 style="font-family:'IM Fell English',serif;font-style:italic;font-size:32px;color:#b09898;letter-spacing:2px;text-shadow:0 0 30px #7a3a5a44;margin-bottom:8px">☭ Reset Order ☭</h1><div style="width:60px;height:1px;background:#5a3a4a;margin:0 auto 28px"></div><p style="font-family:'IM Fell English',serif;font-style:italic;font-size:14px;color:#8a6a6a;line-height:1.8;margin-bottom:28px">The Party acknowledges your request.<br>Your loyalty shall be restored.</p><a href="${link}" style="display:inline-block;background:linear-gradient(135deg,#2a1520,#1a0d18);border:1px solid #7a4a5e;color:#c87a9a;font-family:'Courier Prime',monospace;font-size:11px;letter-spacing:3px;text-transform:uppercase;text-decoration:none;padding:14px 32px;margin-bottom:28px">→ Restore Access ←</a><div style="width:60px;height:1px;background:#2a1520;margin:0 auto 24px"></div><p style="font-family:'Courier Prime',monospace;font-size:11px;color:#3a2a3a;line-height:1.7">This directive expires in one hour.<br>If you did not request this — the Party is already aware.</p></td></tr></table></td></tr></table></td></tr></table><tr><td align="center" style="padding:12px;border-top:1px solid #2a1520;background:#0a070a"><p style="font-family:'IM Fell English',serif;font-style:italic;font-size:11px;color:#3a2a3a">☭ &nbsp; glory to the collective &nbsp; ☭</p></td></tr></table></td></tr></table></td></tr></table></body></html>`})
     res.json({message:'If that email is registered, a reset link was sent.'})
   }catch(e){res.status(500).json({error:'Email service unavailable'})}
 })
