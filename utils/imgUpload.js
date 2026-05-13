@@ -2,21 +2,28 @@ const multer  = require('multer')
 const sharp   = require('sharp')
 const https   = require('https')
 const http    = require('http')
+const crypto  = require('crypto')
 
-// ── Cloudinary via raw HTTPS — no extra package needed ───────────────────────
-async function cloudinaryUpload(buffer, isGif) {
-  const { CLOUDINARY_CLOUD_NAME: cloud, CLOUDINARY_API_KEY: key, CLOUDINARY_API_SECRET: secret } = process.env
+// ── Cloudinary via raw HTTPS ──────────────────────────────────────────────────
+// format: 'gif' | 'webp'  (webp covers both static and animated webp)
+async function cloudinaryUpload(buffer, format) {
+  const {
+    CLOUDINARY_CLOUD_NAME: cloud,
+    CLOUDINARY_API_KEY:    key,
+    CLOUDINARY_API_SECRET: secret,
+  } = process.env
+
   const timestamp = Math.floor(Date.now() / 1000)
   const folder    = 'social-credit'
-  const crypto    = require('crypto')
   const sigStr    = `folder=${folder}&timestamp=${timestamp}${secret}`
   const signature = crypto.createHash('sha1').update(sigStr).digest('hex')
+  const boundary  = '----FormBoundary' + crypto.randomBytes(8).toString('hex')
 
-  const boundary = '----FormBoundary' + crypto.randomBytes(8).toString('hex')
-  const ext      = isGif ? 'gif' : 'webp'
+  const mimeMap = { gif: 'image/gif', webp: 'image/webp' }
+  const mime    = mimeMap[format] || 'image/webp'
 
   const parts = [
-    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="upload.${ext}"\r\nContent-Type: image/${ext}\r\n\r\n`,
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="upload.${format}"\r\nContent-Type: ${mime}\r\n\r\n`,
     buffer,
     `\r\n--${boundary}\r\nContent-Disposition: form-data; name="api_key"\r\n\r\n${key}`,
     `\r\n--${boundary}\r\nContent-Disposition: form-data; name="timestamp"\r\n\r\n${timestamp}`,
@@ -31,7 +38,10 @@ async function cloudinaryUpload(buffer, isGif) {
       hostname: 'api.cloudinary.com',
       path    : `/v1_1/${cloud}/image/upload`,
       method  : 'POST',
-      headers : { 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': body.length },
+      headers : {
+        'Content-Type'  : `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length,
+      },
     }, res => {
       let data = ''
       res.on('data', c => data += c)
@@ -40,7 +50,7 @@ async function cloudinaryUpload(buffer, isGif) {
           const json = JSON.parse(data)
           if (json.secure_url) resolve(json.secure_url)
           else reject(new Error(json.error?.message || 'Upload failed'))
-        } catch(e) { reject(e) }
+        } catch (e) { reject(e) }
       })
     })
     req.on('error', reject)
@@ -59,29 +69,85 @@ const upload = multer({
   },
 })
 
-function isGif(buffer) {
+// ── Format detection ──────────────────────────────────────────────────────────
+function isGifBuffer(buffer) {
   return buffer.length >= 6 &&
-    buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46
+    buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46  // "GIF"
 }
 
+// Returns { format: 'gif'|'webp', animated: bool }
+async function detectFormat(buffer) {
+  if (isGifBuffer(buffer)) {
+    // Sharp can read GIF page count to confirm animation
+    try {
+      const meta = await sharp(buffer, { animated: true }).metadata()
+      return { format: 'gif', animated: (meta.pages || 1) > 1 }
+    } catch {
+      return { format: 'gif', animated: true }
+    }
+  }
+
+  // For WebP / JPEG / PNG / AVIF — use Sharp metadata to detect animation
+  // Animated WebP has pages > 1
+  try {
+    const meta = await sharp(buffer, { animated: true }).metadata()
+    return { format: 'webp', animated: (meta.pages || 1) > 1 }
+  } catch {
+    return { format: 'webp', animated: false }
+  }
+}
+
+// ── Core processor ────────────────────────────────────────────────────────────
 async function processImage(buffer) {
-  const gif = isGif(buffer)
-  let out = buffer
-  if (!gif) {
-    out = await sharp(buffer)
+  const { format, animated } = await detectFormat(buffer)
+
+  if (format === 'gif') {
+    // ── Animated GIF ─────────────────────────────────────────────
+    if (animated) {
+      try {
+        const out = await sharp(buffer, { animated: true })
+          .resize({ width: 800, height: 800, fit: 'inside', withoutEnlargement: true })
+          .gif()
+          .toBuffer()
+        return cloudinaryUpload(out, 'gif')
+      } catch {
+        // Sharp couldn't process it — upload as-is
+        return cloudinaryUpload(buffer, 'gif')
+      }
+    }
+    // ── Static GIF → convert to WebP ─────────────────────────────
+    const out = await sharp(buffer)
       .resize({ width: 800, height: 800, fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 82, effort: 5, smartSubsample: true })
       .toBuffer()
-  } else {
-    try {
-      out = await sharp(buffer, { animated: true })
-        .resize({ width: 800, height: 800, fit: 'inside', withoutEnlargement: true })
-        .gif().toBuffer()
-    } catch { out = buffer }
+    return cloudinaryUpload(out, 'webp')
   }
-  return cloudinaryUpload(out, gif)
+
+  // ── Animated WebP ─────────────────────────────────────────────
+  // FIX: previously fell through to static path and lost all frames.
+  // Must pass `animated: true` to Sharp for BOTH input and output.
+  if (animated) {
+    try {
+      const out = await sharp(buffer, { animated: true })
+        .resize({ width: 800, height: 800, fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 82, effort: 5, smartSubsample: true })  // Sharp preserves frames automatically when input is animated
+        .toBuffer()
+      return cloudinaryUpload(out, 'webp')
+    } catch {
+      // If Sharp can't handle this animated webp, upload original
+      return cloudinaryUpload(buffer, 'webp')
+    }
+  }
+
+  // ── Static image (WebP / JPEG / PNG / AVIF) ───────────────────
+  const out = await sharp(buffer)
+    .resize({ width: 800, height: 800, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 82, effort: 5, smartSubsample: true })
+    .toBuffer()
+  return cloudinaryUpload(out, 'webp')
 }
 
+// ── URL fetcher ───────────────────────────────────────────────────────────────
 async function processImageFromUrl(url) {
   const lib    = url.startsWith('https') ? https : http
   const buffer = await new Promise((res, rej) => {
