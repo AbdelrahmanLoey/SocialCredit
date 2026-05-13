@@ -7,21 +7,22 @@ const{sign,signAdmin}=require('../middleware')
 const{User}=require('../models')
 const safe=u=>{const{password,resetToken,resetExpiry,...rest}=u.toObject();return rest}
 
-// Gmail SMTP via STARTTLS (port 587)
-// Use an App Password (16 chars, spaces stripped) — not your Gmail login password
+// Gmail SMTP via SSL (port 465 — more reliable on cloud hosts than STARTTLS/587)
+// Use an App Password (16 chars) — not your Gmail login password
+// family:4 forces IPv4 so we never hit ENETUNREACH on IPv6-blocked hosts
 function mailer(){
   return nodemailer.createTransport({
     host:'smtp.gmail.com',
-    port:587,
-    secure:false,      // upgraded to TLS via STARTTLS after connect
+    port:465,
+    secure:true,       // SSL from the start (no STARTTLS handshake that can timeout)
     family:4,          // force IPv4 — avoids ENETUNREACH on IPv6-only hosts
     auth:{
       user:process.env.SMTP_USER,
       pass:(process.env.SMTP_PASS||'').replace(/\s/g,''),
     },
-    connectionTimeout:15000,
-    greetingTimeout:10000,
-    socketTimeout:20000,
+    connectionTimeout:20000,
+    greetingTimeout:15000,
+    socketTimeout:25000,
     tls:{rejectUnauthorized:false},
   })
 }
